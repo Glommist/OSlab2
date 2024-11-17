@@ -74,3 +74,16 @@ ssize_t read(int fd, void *buf, size_t count);
 分析原因：可能是因为输入的数据量过小，两个进程还没来得及进行并发写入，进程1的写入就已经完成。所以没出现我认为的乱序结果。
 
 
+内存管理：
+没有正确的初始化全局变量指针，会导致段错误
+如下图：
+![outcome2](screenshots/outcome2.png)
+在分配新进程时，如果需要的内存大小为0，现在有一个大小为12的内存片可以使用，此时的分配就会导致Free Memory数据部分出现错误。
+解决：在查询到的可用内存为第一个时，先要进行指针移动，再释放内存空间。
+
+如下图：此处会出现溢出。
+![outcome3](screenshots/outcome3.png）
+内存合并部分的代码全部重构后解决。
+
+如下图：直接在free_block->next上赋值是错误的。
+![outcome4](screenshots/outcome4.png）

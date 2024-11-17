@@ -20,15 +20,16 @@ struct free_block_type
     struct free_block_type *next;
 };
 struct allocated_block
-{   int pid; int size;
+{   int pid;
+    int size;
     int start_addr;
     char process_name[PROCESS_NAME_LEN];
     struct allocated_block *next;
 };
 struct allocated_block *allocated_block_head = NULL;
-struct allocated_block *ab;
-struct free_block_type *free_block = ;
-struct free_block_type *ftb_to_ab = NULL;
+struct allocated_block *ab = NULL;
+struct free_block_type *free_block;
+struct free_block_type *ftb_to_ab;
 int rearrange_FF();
 int rearrange_WF();
 int rearrange_BF();
@@ -36,6 +37,7 @@ int rearrange();
 int free_mem(struct allocated_block *ab);
 int allocate_mem(struct allocated_block *ab);
 int dispose(struct allocated_block *free_ab);
+void insert_sorted(struct free_block_type **head, struct free_block_type *node, int algorithm);
 /*初始化空闲块，默认为一块，可以指定大小及起始地址*/
 struct free_block_type* init_free_block(int mem_size)
 {
@@ -47,7 +49,8 @@ struct free_block_type* init_free_block(int mem_size)
         return NULL;
     }
     fb->size = mem_size;
-    fb->start_addr = DEFAULT_MEM_START;fb->next = NULL;
+    fb->start_addr = DEFAULT_MEM_START;
+    fb->next = NULL;
     return fb;
 }
 /*显示菜单*/
@@ -92,7 +95,18 @@ void set_algorithm()
     if(algorithm>=1 && algorithm <=3)
     ma_algorithm=algorithm;
     //按指定算法重新排列空闲区链表
-    rearrange(ma_algorithm);
+    struct free_block_type *sorted = NULL;
+    struct free_block_type *current = free_block;
+    while (current != NULL)
+    {
+        struct free_block_type *next = current->next;
+        current->next = NULL;
+        insert_sorted(&sorted, current, MA_FF);
+        current = next;
+    }
+    free_block = sorted;
+    if(ab != NULL)
+        rearrange(ma_algorithm);
 }
 /*按指定的算法整理内存空闲块链表*/
 int rearrange(int algorithm)
@@ -149,6 +163,7 @@ int rearrange_BF()
 int rearrange_WF()
 {
     struct free_block_type *max_fbt = NULL;
+    max_fbt = free_block;
     ftb_to_ab = free_block;
     while(ftb_to_ab != NULL)
     {
@@ -172,7 +187,6 @@ int rearrange_WF()
 /*创建新的进程，主要是获取内存的申请数量*/
 int new_process()
 {
-
     int size; int ret;
     ab=(struct allocated_block *)malloc(sizeof(struct allocated_block));
     if(!ab) exit(-5);
@@ -219,13 +233,8 @@ int allocate_mem(struct allocated_block *ab)
     if(return_flag == SIZE_ENOUGH && (ftb_to_ab->size - ab->size) > MIN_SLICE)
     {
         ab->start_addr = ftb_to_ab->start_addr;
-
-        while(fbt!=ftb_to_ab)
-        {
-            fbt = fbt->next;
-        }
-        fbt->size = fbt->size - ab->size;
-        fbt->start_addr = fbt->start_addr + ab->size;
+        ftb_to_ab->size = ftb_to_ab->size - ab->size;
+        ftb_to_ab->start_addr = ftb_to_ab->start_addr + ab->size;
         return 1;
     }
     // 2. 找到可满足空闲分区且但分配后剩余空间比较小，则一起分配
@@ -233,58 +242,84 @@ int allocate_mem(struct allocated_block *ab)
     {
         ab->size = ftb_to_ab->size;
         ab->start_addr = ftb_to_ab->start_addr;
-
-        while(fbt!= ftb_to_ab)
+        if(ftb_to_ab == free_block)
         {
-            pre = fbt;
-            fbt = ftb_to_ab;
+            free_block = free_block->next;
+            free(ftb_to_ab);
         }
-        pre->next = fbt->next;
-        free(fbt);
+        else
+        {
+            while(fbt != ftb_to_ab)
+            {
+                pre = fbt;
+                fbt = fbt->next;
+            }
+            pre->next = fbt->next;
+            free(fbt);
+        }
         return 1;
     }
     // 3. 找不可满足需要的空闲分区但空闲分区之和能满足需要，则采用内存紧缩技术，
     //进行空闲分区的合并，然后再分配
-    if(return_flag == SIZE_NOT_ENOUGH)
+    if (return_flag == SIZE_NOT_ENOUGH)
     {
-        int max_size = 0;
-        while(fbt!=NULL)
+        struct free_block_type *sorted = NULL;
+        struct free_block_type *current = free_block;
+        while (current != NULL)
         {
-            max_size+=fbt->size;
-            pre = fbt;
-            fbt = fbt->next;   
+            struct free_block_type *next = current->next;
+            current->next = NULL;
+            insert_sorted(&sorted, current, MA_FF);
+            current = next;
         }
-        if(max_size <ab->size)
+        free_block = sorted;
+        fbt = free_block;
+        int max_size = 0;
+        struct free_block_type *temp_fbt = fbt;
+        struct allocated_block *temp_ab = allocated_block_head;
+        // 计算空闲分区的总大小
+        while (temp_fbt != NULL)
+        {
+            max_size += temp_fbt->size;
+            pre = temp_fbt;
+            temp_fbt = temp_fbt->next;   
+        }
+        
+        // 如果总空闲内存小于需要分配的内存，返回失败
+        if (max_size < ab->size)
             return -1;
         else
         {
-            //合并
-            /*
-            算法思路如下：
-            开始对free_block进行遍历：以第一个拿到的空闲块为起点
-            将后续块移动到该第一个块后面，修改相应的指针。直到块大小满足要求
-            随后进行递归调用。
-            */
-           struct allocated_block *ab_temp = allocated_block_head;
-           struct allocated_block *ab_pre;
-           while(ab_temp->start_addr<free_block->start_addr)
+            // 合并空闲内存块
+            fbt = free_block;
+            while (fbt != NULL && fbt->size < ab->size)
             {
-                ab_pre = ab_temp;
-                ab_temp = ab_temp->next;
+                if (fbt->next != NULL)
+                {
+                    // 合并当前空闲块和下一个块
+                    /*
+                    算法思路如下：
+                    开始对free_block进行遍历：以第一个拿到的空闲块为起点
+                    将后续块移动到该第一个块后面，修改相应的指针。直到块大小满足要求
+                    随后进行递归调用。
+                    */
+                    temp_ab = allocated_block_head;
+                    fbt->size += fbt->next->size;
+                    while(temp_ab!=NULL)
+                    {
+                        if(temp_ab->start_addr > fbt->start_addr && temp_ab->start_addr < fbt->next->start_addr)
+                        {
+                            temp_ab->start_addr += fbt->next->size;
+                        }
+                        temp_ab = temp_ab->next;
+                    }
+                    struct free_block_type *temp = fbt->next;
+                    fbt->next = fbt->next->next;
+                    free(temp);
+                }
             }
-           while(free_block->size < ab->size)
-            {
-                free_block->size += (free_block->next)->size;
-                free_block->next = (free_block->next) ->next;
-                
-                ab_temp = ab_temp->next;
-                ab_temp->start_addr = ab_pre->start_addr + ab_pre->size + 1;
-                ab_pre = ab_temp;
-                ab_temp = ab_temp->next;
-                free(free_block->next);
-            }
-           allocate_mem(ab);
         }
+        return allocate_mem(ab);
     }
     // 4. 在成功分配内存后，应保持空闲分区按照相应算法有序
 
@@ -300,30 +335,31 @@ struct allocated_block *find_process(int pid)
         {
             return temp;
         }
+        temp = temp->next;
     }
     return NULL;
 }
 /*删除进程，归还分配的存储空间，并删除描述该进程内存分配的节点*/
 void kill_process()
 {
-    struct allocated_block *ab;
+    struct allocated_block *ab_t;
     int pid;
     printf("Kill Process, pid=");
     scanf("%d", &pid);
-    ab=find_process(pid);
-    if(ab!=NULL)
+    ab_t=find_process(pid);
+    if(ab_t!=NULL)
     {
-        free_mem(ab); /*释放 ab 所表示的分配区*/
-        dispose(ab); /*释放 ab 数据结构节点*/
+        free_mem(ab_t); /*释放 ab 所表示的分配区*/
+        dispose(ab_t); /*释放 ab 数据结构节点*/
     }
 }
 void insert_sorted(struct free_block_type **head, struct free_block_type *node, int algorithm)
 {
     struct free_block_type *current;
     if (*head == NULL || 
-        (algorithm == 0 && (*head)->start_addr >= node->start_addr) ||
-        (algorithm == 1 && (*head)->size >= node->size) ||
-        (algorithm == 2 && (*head)->size <= node->size))
+        (algorithm == MA_FF && (*head)->start_addr >= node->start_addr) ||
+        (algorithm == MA_BF && (*head)->size >= node->size) ||
+        (algorithm == MA_WF && (*head)->size <= node->size))
         {
             node->next = *head;
             *head = node;
@@ -347,60 +383,52 @@ void insert_sorted(struct free_block_type **head, struct free_block_type *node, 
 int free_mem(struct allocated_block *ab)
 {
     int algorithm = ma_algorithm;
-    struct free_block_type *fbt, *pre, *work;
+    struct free_block_type *fbt, *work,*temp_free_mem;
     fbt=(struct free_block_type*) malloc(sizeof(struct free_block_type));
-    if(!fbt) return -1;  
-    work = free_block;
-    pre = work;
+    if(!fbt) return -1;
     // 进行可能的合并，基本策略如下
     fbt->next = NULL;
     fbt->size = ab->size;
     fbt->start_addr = ab->start_addr;
-    int myflag = 0;
+    
     // 1. 将新释放的结点插入到空闲分区队列末尾
-    // 2. 对空闲链表按照地址有序排列
-    // 3. 检查并合并相邻的空闲分区
-    while(work != NULL)
+    temp_free_mem = free_block;
+    while(temp_free_mem->next != NULL)
     {
-        if(fbt->start_addr < pre->start_addr)
+        temp_free_mem = temp_free_mem->next;
+    }
+    temp_free_mem->next = fbt;
+    // 2. 对空闲链表按照地址有序排列
+    struct free_block_type *sorted = NULL;
+    struct free_block_type *current = free_block;
+    while (current != NULL)
+    {
+        struct free_block_type *next = current->next;
+        current->next = NULL;
+        insert_sorted(&sorted, current, MA_FF);
+        current = next;
+    }
+    free_block = sorted;
+    // 3. 检查并合并相邻的空闲分区
+    work = free_block;
+    int myflag = 0;
+    while (work != NULL && work->next != NULL)
+    {
+        if (work->start_addr + work->size == work->next->start_addr)
         {
-            if(fbt->start_addr + fbt->size + 1 == pre->start_addr)
-            {
-                pre->start_addr = fbt->start_addr;
-                pre->size += fbt->size;
-                free(fbt);
-                return 1;
-            }
-            else
-            {
-                fbt->next = free_block;
-                free_block = fbt;
-            }
+            work->size += work->next->size;
+            struct free_block_type *temp = work->next;
+            work->next = work->next->next;
+            free(temp);
         }
         else
         {
-            if(fbt->start_addr < work->start_addr)
-            {
-                if(pre->start_addr + pre->size + 1 == fbt->start_addr)
-                {
-                    pre->size += fbt->size;
-                    myflag = 1;
-                }
-                if(fbt->start_addr + fbt->size + 1 == work->start_addr)
-                {
-                    work->start_addr = fbt ->start_addr;
-                    work->size += fbt->size;
-                    myflag = 1;
-                }
-                if(myflag){free(fbt);return 1;}
-                pre->next = fbt;
-                fbt->next = work;
-            }
+            work = work->next;
         }
     }
     // 4. 将空闲链表重新按照当前算法排序
-    struct free_block_type *sorted = NULL;
-    struct free_block_type *current = free_block;
+    sorted = NULL;
+    current = free_block;
     while (current != NULL)
     {
         struct free_block_type *next = current->next;
@@ -467,7 +495,8 @@ int main()
     {
         display_menu(); //显示菜单
         fflush(stdin);
-        choice=getchar(); //获取用户输入
+        choice = getchar();//获取用户输入
+        
         switch(choice)
         {
             case '1': set_mem_size(); break; //设置内存大小
