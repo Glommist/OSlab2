@@ -221,9 +221,10 @@ int new_process()
     return 3;
 }
 /*分配内存模块*/
+
 int allocate_mem(struct allocated_block *ab)
 {
-    struct free_block_type *fbt, *pre;
+    struct free_block_type *fbt, *pre,*temp;
     int request_size=ab->size;
     fbt = pre = free_block;
     int return_flag = SIZE_NOT_ENOUGH;
@@ -244,8 +245,13 @@ int allocate_mem(struct allocated_block *ab)
         ab->start_addr = ftb_to_ab->start_addr;
         if(ftb_to_ab == free_block)
         {
-            free_block = free_block->next;
+            if(free_block->next != NULL)
+            {
+                free_block = free_block->next;
+            }
+            temp = free_block;
             free(ftb_to_ab);
+            ftb_to_ab->next = NULL;
         }
         else
         {
@@ -496,6 +502,10 @@ int main()
         display_menu(); //显示菜单
         fflush(stdin);
         choice = getchar();//获取用户输入
+        while (choice == '\n' || choice == '\r')
+        {
+            choice = getchar();
+        }
         
         switch(choice)
         {
