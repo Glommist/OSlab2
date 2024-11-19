@@ -87,3 +87,8 @@ ssize_t read(int fd, void *buf, size_t count);
 
 如下图：直接在free_block->next上赋值是错误的。
 ![outcome4](screenshots/outcome4.png）
+
+
+
+在分配全部空间，再进行释放后，会造成Segmentation fault
+解决：在分配的空间是free_block的最后一块时，其next为NULL，没有考虑到这一点导致了错误。
